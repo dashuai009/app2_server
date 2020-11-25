@@ -1,4 +1,7 @@
+const { response } = require('express');
 var mysql = require('mysql');
+const { resourceLimits } = require('worker_threads');
+var oper = require('./mine');
 var connection = mysql.createConnection({
     host: 'localhost',
     user: 'root',
@@ -9,71 +12,137 @@ var connection = mysql.createConnection({
 
 
 
-var user = new Array();//{userName:string,pwdHash:string,id:string}
-var map = {};//userName,pedHash,X,Y,status
-var cnt = 0;
-
 //新建用户，
+var sqlNewUser = 'insert into user(name,passwd,curMineId) values(?,?,-1);';
+//查询用户密码
+var sqlQueryPwd = 'select passwd from user where user.name=?;';
 
-exports.newUser = function (userName0, pwdHash0) {
+//查询用户当前正在玩的游戏id
+var sqlSelectCurID = 'select curMineID from user where user.name=? and user.passed=?';
+//修改用户当前正在玩的游戏id
+var sqlUpdateCurId = 'UPDATE table_name SET curMineID=? WHERE user.name=? and user.passed=?';
+
+//根据id查询当前正在玩的地图
+var sqlMapAndXAndY = 'select status,x,y from map where map.id=?';
+
+var errSql = {
+    status: "fail",
+    msg: "查询据库失败"
+}
+var fuckU = {
+    status: "fail",
+    msg: "What are you 弄啥嘞？"
+}
+
+
+var sqlNewMap = 'insert into map(name,passwd,X,Y,startTime,init,status) values(?,?,?,?,?,?,?);SELECT @@IDENTITY;';
+exports.newUser = function (userName0, pwdHash0) {//新建用户，初始局面为-1
     connection.connect();
-    var mySquery1 = 'insert into user(name,passwd,curMineId) values(?,?,-1);';
-    connection.query(mySquery1, [userName0, pwdHash0], function (err, result) {
+    var flag = true;
+    connection.query(sqlNewUser, [userName0, pwdHash0], function (err, result) {
         if (err) {
             console.log('[New user ERROR] - ', err.message);
-            return false;
+            flag = false;
         }
-        console(result);
     });
     connection.end();
-    return true;//新建用户，初始局面为-1
 }
-//查找用户
 
-exports.search = function (userName0, pwdHash0, id0) {
-    for (x in user) {
-        if (x.userName == userName0) {
-            if (x.pwdHash == pwdHash0) {
-                if (x.id == id0) {
-                    return "Match";
-                } else {
-                    return "idError";
+exports.login = function (userName0, pwdHash0) {
+    connection.connect();
+    var response;
+    connection.query(sqlQueryPwd, [userName0], function (err, result) {
+        console.log(err);
+        console.log(result);
+        if (err) {
+            response = {
+                status: 'fail',
+                msg: '数据库查询失败！'
+            }
+        } else {
+            if (result.RowDataPacket.passwd == pwdHash0) {
+                response = {
+                    status: 'success',
+                    msg: 'log in successfully'
                 }
             } else {
-                return "pwdError";
+                response = {
+                    status: 'fail',
+                    msg: '密码错误！'
+                }
             }
         }
-    }
-    return "noSuchUser";
+    })
+    connection.end();
+    return response;
 }
 
-function addMap(userName0, pwdHash0, X, Y) {
-    x.id = cnt;
-    ++cnt;
-    X.status = [];
-    for (var i = 0; i < X; ++i) {
-        var col = [];
-        col = [];
-        for (var j = 0; j < Y; ++j) {
-            col.push(3);
+function newGameID(userName0, pwdHash0, X, Y, L, startStatus) {
+    let res;
+    connection.query(sqlNewMap, [userName0, pwdHash0, X, Y, L, new Date().getTime(), startStatus, startStatus], function (err, result) {
+        if (err) {
+            res = -1;
+            console.log(err);
+        } else {
+            res = result.RowDataPacket.id;
         }
-        x.status.push(col);
-    }
+    })
+    return res;
 }
-//新建雷局
-
-exports.newMap = function (userName0, pwdHash0, X, Y) {
-    for (x in user) {
-        if (x.userName == userName0 && x.pwdHash == pwdHash0) {
-            if (x.id == -1) {
-                appMap(userName0, pwdHash0, X, Y);
-            } else {
-                return "aMapExist";
-            }
+exports.startGame = function (userName0, pwdHash0, X, Y, L) {
+    let response;
+    connection.connect();
+    let startStatus = oper.newMap(X, Y, L);
+    console.log(startStatus);
+    let newID = newGameID(userName0, pwdHash0, X, Y, L, startStatus);
+    if (newID == -1) {
+        response = errSql;
+        console.log(err);
+    } else {
+        connection.query(sqlUpdateCurId, [userName0, pwdHash0], function (err, result) {
+            console.log(err, result);
+        });
+        response = {
+            status: "success",
+            msg: "开始游戏~~",
+            map: oper.toUserMap(startStatus, X, Y)//返回json格式，不是字符串！
         }
     }
-    return "notMatch";
+    connection.end();
 }
 
-//对雷局进行操作
+exports.clickHere = function (userName0, pwdHash0, x, y) {
+    connection.connect();
+    let response;
+    let X, Y;
+    connection.query(sqlSelectCurID, [userName0, pwdHash0], function (err, result) {
+        if (err) {
+            response = errSql;
+            console.log(err);
+        } else {
+            id = result.RowDataPacket.curMineId;
+        }
+    })
 
+    let a;
+    connection.query(sqlMapAndXAndY, [id], function (err, result) {
+        if (err) {
+            response = errSql;
+            console.log(err);
+        } else {
+            a = JSON.parse(result.RowDataPacket.status);
+            X = result.RowDataPacket.X;
+            Y = result.RowDataPacket.Y;
+        }
+    })
+    if (a.status == 'playing' && 0 <= a.map[x * Y + y] && a.map[x * Y + y] < 10) {
+        oper.click(a, x, y, X, Y);
+        response = {
+            status: "sucess",
+            msg: oper.toUserMap(a)
+        }
+    } else {
+        response = fuckU;
+    }
+    connection.end();
+}
