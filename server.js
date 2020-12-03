@@ -4,7 +4,48 @@ var bodyParser = require('body-parser');
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-var dataBase = require('./dataBase.js');
+var mysql = require('mysql');
+const { resourceLimits } = require('worker_threads');
+var oper = require('./mine');
+var connection = mysql.createConnection({
+    host: 'localhost',
+    user: 'root',
+    password: '123asdASD',
+    database: 'mine',
+    charset: 'UTF8'
+});
+
+
+
+
+//新建用户，
+var sqlNewUser = 'insert into user(name,passwd,curMineId) values(?,?,-1);';
+//查询用户密码
+var sqlQueryPwd = 'select passwd from user where user.name=?;';
+
+//查询用户当前正在玩的游戏id
+var sqlSelectCurID = 'select curMineID from user where user.name=? and user.passwd=?';
+//修改用户当前正在玩的游戏id
+var sqlUpdateCurId = 'UPDATE user SET curMineId=? WHERE user.name=? and user.passwd=?';
+
+//根据id查询当前正在玩的地图
+var sqlMapAndXAndY = 'select status,X,Y,L from map where map.id=?';
+
+var sqlUpdateMap = 'UPDATE map SET status=? WHERE map.id=?;';
+
+var errSql = {
+    status: "fail",
+    msg: "查询据库失败"
+}
+var fuckU = {
+    status: "fail",
+    msg: "What are you 弄啥嘞？"
+}
+
+
+var sqlNewMap = 'insert into map(name,passwd,id,X,Y,L,startTime,init,status) values(?,?,?,?,?,?,?,?,?);';
+
+
 
 // 创建 application/x-www-form-urlencoded 编码解析
 //var urlencodedParser = bodyParser.urlencoded({ extended: false })
@@ -33,40 +74,141 @@ app.get('/index.html', function (req, res) {
 
 
 app.post('/login', function (req, res) {
-    var response = dataBase.login(req.body.userName, req.body.pwdHash);
-    res.end(JSON.stringify(response));
+    console.log('登录用户信息', req.body);
+    var response;
+    connection.query(sqlQueryPwd, [req.body.userName], function (err, result) {
+        console.log(err);
+        console.log(result);
+        if (err) {
+            response = errSql;
+        } else {
+            if (result[0].passwd == req.body.pwdHash) {
+                response = {
+                    status: 'success',
+                    msg: 'log in successfully'
+                }
+            } else {
+                response = {
+                    status: 'fail',
+                    msg: '密码错误！'
+                }
+            }
+        }
+        console.log(response);
+        res.end(JSON.stringify(response));
+    });
 })
 
 app.post('/signup', function (req, res) {
-    console.log(req.body);
+    console.log('注册用户发送信息', req.body);
     var response;
-    if (dataBase.newUser(req.body.userName, req.body.pwdHash)) {
-        response = {
-            status: 'success',
-            msg: 'Create sucessfully!'
-        };
+    //新建用户，初始局面为-1
+    connection.query(sqlNewUser, [req.body.userName, req.body.pwdHash], function (err, result) {
+        if (err) {
+            console.log('[New user ERROR] - ', err.message);
+            response = {
+                status: 'fail',
+                msg: 'User exists!'
+            };
+        } else {
+            response = {
+                status: 'success',
+                msg: 'Create sucessfully!'
+            };
+        }
+        console.log('响应结果', response);
+        res.end(JSON.stringify(response));
+    });
 
-    } else {
-        response = {
-            status: 'fail',
-            msg: 'User exists!'
-        };
-    }
-    res.end(JSON.stringify(response));
 })
 
-app.post('/startGame', function (res, req) {
-    var response;
-    response = dataBase.startGame(req.body.userName, req.body.pwdHash, req.body.X, req.body.Y, req.body.L);
-    console.log(response);
-    res.end(JSON.stringify(response));
+
+
+app.post('/startGame', function (req, res) {
+    console.log('开始游戏的信息：', req.body);
+    let userName0 = req.body.userName;
+    let pwdHash0 = req.body.pwdHash;
+    let X = req.body.X; let Y = req.body.Y; let L = req.body.L;
+    let response;
+    let startStatus = oper.newMap(X, Y, L);
+    let newID = new Date().getTime() * 100;
+    connection.query(
+        sqlNewMap,
+        [userName0, pwdHash0, newID, X, Y, L, new Date().getTime(), JSON.stringify(startStatus), JSON.stringify(startStatus)],
+        function (err, result) {
+            if (err) {
+                console.log(err);
+                response = errSql;
+                res.end(JSON.stringify(response));
+            } else {
+                console.log('新建游戏的id', newID);
+                connection.query(sqlUpdateCurId, [newID, req.body.userName, req.body.pwdHash], function (err, result) {
+                    console.log(err, result);
+                    if (err) {
+                        response = errSql;
+                    } else {
+                        let tmp = oper.toUserMap(startStatus, req.body.X, req.body.Y)//返回json格式，不是字符串！
+                        response = {
+                            status: "success",
+                            msg: tmp.result,
+                            map: tmp.map
+                        }
+                    }
+                    res.end(JSON.stringify(response));
+                });
+            }
+        }
+    )
 })
 
-app.post('/clickHere', function (res, req) {
+app.post('/clickHere', function (req, res) {
     var response;
-    response = dataBase.clickHere(req.body.userName, req.body.pwdHash, req.body.X, req.body.Y);
-    console.log(response);
-    res.end(JSON.stringify(response));
+    let X, Y, L;
+    let clickx = req.body.X;
+    let clicky = req.body.Y;
+    console.log('点击信息:', req.body);
+    connection.query(sqlSelectCurID, [req.body.userName, req.body.pwdHash],
+        function (err, result) {
+            console.log('查询用户当前玩的游戏id的结果', result);
+            if (err) {
+                response = errSql;
+                console.log(err);
+                res.end(JSON.stringify(response));
+            } else {//查询到用户当前玩的游戏id
+                let id = result[0].curMineID;
+                let a;
+                console.log('查询到的id', id);
+                connection.query(sqlMapAndXAndY, [id], function (err, result) {
+                    if (err) {
+                        response = errSql;
+                        console.log(err);
+                        res.end(JSON.stringify(response));
+                    } else {//找到棋局
+                        a = JSON.parse(result[0].status);
+                        X = result[0].X;
+                        Y = result[0].Y;
+                        L = result[0].L;
+                        console.log('数据库中的地图：', a, L);
+                        console.log(a.result == 'playing', (a.map)[clickx * Y + clicky], a.map[clickx * Y + clicky] < 10)
+                        if (a.result == 'playing' && 0 <= a.map[clickx * Y + clicky] && a.map[clickx * Y + clicky] < 10) {
+                            oper.click(a, clickx, clicky, X, Y, L);
+                            connection.query(sqlUpdateMap, [JSON.stringify(a), id]);
+                            let tmp = oper.toUserMap(a, X, Y);
+                            response = {
+                                status: "success",
+                                msg: tmp.result,
+                                map: tmp.map
+                            }
+                        } else {
+                            response = fuckU;
+                        }
+                        console.log(response);
+                        res.end(JSON.stringify(response));
+                    }
+                })
+            }
+        }
+    )
 })
 
 var server = app.listen(8081, function () {
