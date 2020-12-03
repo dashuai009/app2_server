@@ -8,8 +8,8 @@
 
 
 var a = new Array(75 * 75);
-var dx = [-1, 0, 1, 0];
-var dy = [0, 1, 0, -1];
+var dx = [-1, 0, 1, 0, -1, -1, 1, 1];
+var dy = [0, 1, 0, -1, -1, 1, 1, -1];
 var qu = new Array(75 * 75);
 
 exports.newMap = function (X, Y, L) {
@@ -27,21 +27,24 @@ exports.newMap = function (X, Y, L) {
         a[rand] = a[index];
         a[index] = value;
     }
-    let status = new Array(length);
+    let status = new Array(0);
 
     for (let i = 0; i < length; ++i) {
-        status[i] = 0;
+        status.push(0);
     }
     for (let i = 0; i < L; ++i) {
         status[a[i]] = 9;
+        console.log(a[i]);
     }
+    console.log('adfad', status);
     for (let i = 0; i < L; ++i) {
         let x, y;
-        x = i / Y;
-        y = i % Y;
-        for (let j = 0; j < 4; ++j) {
-            let xx = x + dx[i];
-            let yy = y + dy[i];
+        x = Math.floor((a[i] + 0.1) / Y);
+        y = a[i] % Y;
+        console.log('x=', x, 'y=', y);
+        for (let j = 0; j < 8; ++j) {
+            let xx = x + dx[j];
+            let yy = y + dy[j];
             if (0 <= xx && xx < X && 0 <= yy && yy < Y) {
                 if (status[xx * Y + yy] != 9) {
                     status[xx * Y + yy]++;
@@ -49,10 +52,12 @@ exports.newMap = function (X, Y, L) {
             }
         }
     }
-    let res;
-    res.result = "playing";//已成功，已失败
-    res.status = status;
-    return JSON.stringify(res);
+    let res = {
+        result: "playing",//已成功，已失败
+        map: status
+    };
+    console.log('新建棋局状态：', res)
+    return res;
 }
 
 
@@ -61,32 +66,38 @@ exports.newMap = function (X, Y, L) {
 //-1表示未被翻开
 // playing 正在玩  // success 成功结束  //fail 失败
 
-exports.toUserMap = function (a, X, Y) {
+exports.toUserMap = function (serverA, X, Y) {
+    console.log('toUserMAp before:', serverA);
     //将服务器中存储的状态图转换为前端可以看的图
-    let b = new Array(X * Y);
+    console.log(X, Y);
+    var userA = new Array(X * Y);
     for (let i = 0; i < X * Y; ++i) {
-        if (a.status == 'playing') {
-            if (a.map[i] >= 10) {
-                b[i] = a.map[i] % 10;
+        if (serverA.result == 'playing') {
+            if ((serverA.map)[i] >= 10) {
+                userA[i] = serverA.map[i] % 10;
             } else {
-                b[i] = -1;
+                userA[i] = -1;
             }
         } else {
-            b[i] = a.map[i] % 10;
+            userA[i] = (serverA.map)[i] % 10;
         }
     }
-    let res;
-    res.status = a.status;
-    res.map = b;
+    let res = {
+        result: serverA.result,
+        map: userA
+    }
+    console.log('toUserMAp after:', res);
     return res;
 }
 
-exports.click = function (a, x, y, X, Y) {
+
+//地图形式为服务器存储的形式
+exports.click = function (a, x, y, X, Y, L) {
     if (a.map[x * Y + y] == 9) {
-        a.status = 'fail';
+        a.result = 'fail';
         for (let i = 0; i < X * Y; ++i) {
-            if (a.map[i] >= 10) {
-                a.map[i] -= 10;
+            if (a.map[i] < 10) {
+                a.map[i] += 10;
             }
         }
         return;
@@ -94,21 +105,38 @@ exports.click = function (a, x, y, X, Y) {
 
     let head, tail;
     head = 0;
-    qu[tail++] = x * Y + y;
-    a.map[x * Y + y];
+    tail = 0;
+    qu[tail] = x * Y + y;
+    tail += 1;
+    a.map[x * Y + y] += 10;
 
     while (head < tail) {
         let front = qu[head];
         ++head;
-        for (let i = 0; i < 4; ++i) {
-            let xx = front / Y + dx[i];
-            let yy = front % Y + dy[i];
-            if (0 <= xx && xx < X && 0 <= yy && yy < Y && a.map[xx * Y + yy] < 9) {
-                //   <9未被翻开且没有雷
-                a.map[xx * Y + yy] += 10;
-                qu[tail++] = xx * Y + yy;
+        if (a.map[front] == 10)
+            for (let i = 0; i < 8; ++i) {
+                let xx = Math.floor((front + 0.1) / Y) + dx[i];
+                let yy = front % Y + dy[i];
+                if (0 <= xx && xx < X && 0 <= yy && yy < Y && a.map[xx * Y + yy] < 9) {
+                    //   <9未被翻开且没有雷
+                    a.map[xx * Y + yy] += 10;
+                    qu[tail++] = xx * Y + yy;
+                }
             }
+    }
+    let cnt = 0;
+    for (let i = 0; i < X * Y; ++i) {
+        if (a.map[i] < 10) {
+            ++cnt;
         }
     }
+    if (cnt == L) {
+        a.result = 'success';
+        for (let i = 0; i < X * Y; ++i)
+            if (a.map[i] < 9) {
+                a.map[i] += 10;
+            }
+    }
+    console.log('cnt=',cnt)
     return;
 }
